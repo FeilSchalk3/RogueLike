@@ -58,7 +58,8 @@ color_light_ground = libtcod.Color(200, 180, 50)
 LEVEL_UP_BASE = 200
 LEVEL_UP_FACTOR = 150
 LEVEL_SCREEN_WIDTH = 40
-
+PLAYER_SKILL_DAMAGE = 2
+BUFF_AMOUNT = 2
 
 #################
 #   Classes     #
@@ -314,6 +315,16 @@ class Equipment:
         self.is_equipped = False
         message('Dequipped ' + self.owner.name + ' from ' + self.slot + '.', libtcod.light_yellow)
         
+class Skill:
+    def __init__(self, name, use_function = None):
+        self.name = name
+        self.use_function = use_function
+    
+    def use(self):
+        if self.use_function == None:
+            message('The skill ' + self.owner.name + ' cannot be used', libtcod.yellow)
+        self.use_function()    
+            
         
 ################
 #   Functions  #
@@ -695,6 +706,19 @@ def inventory_menu(header):
     if index is None or len(inventory) == 0: return None
     return inventory[index].item
 
+def skill_menu(header):
+    #show menu
+    if len(skills) == 0:
+        options = ['You have no skills!']
+    else:
+        options = []
+        for skill in skills:
+            text = skill.name
+            options.append(text)
+    index = menu(header, options, INVENTORY_WIDTH)
+    if index is None or len(skills) == 0: return None
+    return skills[index]
+    
 def main_menu():
     img = libtcod.image_load('menu_background1.png')
     while not libtcod.console_is_window_closed():
@@ -806,6 +830,10 @@ def handle_keys():
                 chosen_item = inventory_menu('Press the key next to an item to drop it, or any other to cancel.\n')
                 if chosen_item is not None:
                     chosen_item.drop()
+            if key_char == 'k':
+                chosen_skill = skill_menu('Press the key next to a skill to use it!')
+                if chosen_skill is not None:
+                    chosen_skill.use()
             
             if key_char == '<':
                 #go down stairs
@@ -941,11 +969,12 @@ def save_game():
     file['game_state'] = game_state
     file['stairs_index'] = objects.index(stairs)
     file['dungeon_level'] = dungeon_level
+    file['skills'] = skills
     file.close()
 
 def load_game():
     #Load previous game
-    global map, objects, player, inventory, game_msgs, game_state, stairs, dungeon_level
+    global map, objects, player, inventory, game_msgs, game_state, stairs, dungeon_level, skills
     
     file = shelve.open('savegame', 'r')
     map = file['map']
@@ -956,6 +985,7 @@ def load_game():
     game_state = file['game_state']
     stairs = objects[file['stairs_index']]
     dungeon_level = file['dungeon_level']
+    skills = file['skills']
     file.close()
     
     initialize_fov()
@@ -987,6 +1017,7 @@ def next_level():
     dungeon_level += 1
 
 def check_level_up():
+    global skills
     #see if the player bossed up
     level_up_xp = LEVEL_UP_BASE + player.level * LEVEL_UP_FACTOR
     if player.fighter.xp >= level_up_xp:
@@ -1006,6 +1037,14 @@ def check_level_up():
             player.fighter.base_power += 1
         elif choice == 2:
             player.fighter.base_defense += 1
+        
+        if player.level == 2:
+            sword_spin = Skill('Sword Spin', use_function = spin_move)
+            skills.append(sword_spin)
+        
+        if player.level == 5:
+            def_buff = Skill('Armour of Courage', use_function = defense_buff)
+            skills.append(def_buff)
             
 def from_dungeon_level(table):
     #returns a value dependent on a level!
@@ -1074,6 +1113,33 @@ def cast_fireball():
             message('The ' + obj.name + ' gets burned for ' + str(FIREBALL_DAMAGE) + ' hit points.', libtcod.orange)
             obj.fighter.take_damage(FIREBALL_DAMAGE)
 
+def spin_move():
+    #HYAH HEY HYEAHHHHHHH
+    message('You swing your sword wildly about the area damaging all monsters in range!')
+    
+    skill_power = player.fighter.power + 1
+    
+    for obj in objects:
+        if obj.distance(player.x, player.y) <= 2 and obj.fighter and obj != player:
+            skill_damage = skill_power - obj.fighter.defense
+            message('The ' + obj.name + ' takes ' + str(skill_damage) + ' damage!', libtcod.orange)
+            obj.fighter.take_damage(skill_damage)
+    message('The attack took some strength out of you! You take ' + str(PLAYER_SKILL_DAMAGE) + 'damage!', libtcod.flame)
+    player.fighter.take_damage(PLAYER_SKILL_DAMAGE)
+
+def defense_buff():
+    #Cast Protect Self
+    global is_buff_active
+    
+    if not is_buff_active:
+        message('Your fortitude and courage has influenced your agility!', libtcod.sky)
+        message('Your defense increases by ' + BUFF_AMOUNT, libtcod.sky)
+        player.fighter.base_defense += BUFF_AMOUNT
+        is_buff_active = True
+    else:
+        message('The defense buff is already active!', libtcod.red)
+        
+    
     
 #############################
 #   Pre-Loop Declaration    #
@@ -1089,7 +1155,7 @@ panel = libtcod.console_new(SCREEN_WIDTH, PANEL_HEIGHT)
 libtcod.sys_set_fps(LIMIT_FPS) #SET FPS
 
 def new_game():
-    global player, inventory, game_msgs, game_state, dungeon_level
+    global player, inventory, game_msgs, game_state, dungeon_level, skills
     
     dungeon_level = 1
     
@@ -1104,6 +1170,8 @@ def new_game():
     
     game_msgs = [] 
     inventory = []
+    skills = []
+    is_buff_active = False
     
     message('Welcome stranger! Prepare to face danger and doom!', libtcod.red)
 
