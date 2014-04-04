@@ -1042,7 +1042,7 @@ def check_level_up():
             sword_spin = Skill('Sword Spin', use_function = spin_move)
             skills.append(sword_spin)
         
-        if player.level == 5:
+        if player.level == 3:
             def_buff = Skill('Armour of Courage', use_function = defense_buff)
             skills.append(def_buff)
             
@@ -1133,7 +1133,7 @@ def defense_buff():
     
     if not is_buff_active:
         message('Your fortitude and courage has influenced your agility!', libtcod.sky)
-        message('Your defense increases by ' + BUFF_AMOUNT, libtcod.sky)
+        message('Your defense increases by ' + str(BUFF_AMOUNT), libtcod.sky)
         player.fighter.base_defense += BUFF_AMOUNT
         is_buff_active = True
     else:
@@ -1155,7 +1155,7 @@ panel = libtcod.console_new(SCREEN_WIDTH, PANEL_HEIGHT)
 libtcod.sys_set_fps(LIMIT_FPS) #SET FPS
 
 def new_game():
-    global player, inventory, game_msgs, game_state, dungeon_level, skills
+    global player, inventory, game_msgs, game_state, dungeon_level, skills, is_buff_active
     
     dungeon_level = 1
     
