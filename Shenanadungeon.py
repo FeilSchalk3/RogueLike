@@ -42,6 +42,8 @@ CONFUSE_NUM_TURNS = 10
 CONFUSE_RANGE = 8
 FIREBALL_RADIUS = 3
 FIREBALL_DAMAGE = 25
+ARCHER_RANGE = 3
+ARROW_DAMAGE = 3
 
 #FOV Variables
 FOV_ALGO = 0
@@ -107,7 +109,7 @@ class Object:
         dx = int(round(dx / distance))
         dy = int(round(dy / distance))
         self.move(dx, dy)
-        
+      
         
     def distance_to(self, other):
         #returns distance
@@ -167,27 +169,38 @@ class Rect:
 
 class Fighter:
     #combat shenanigans
-    def __init__(self, hp, defense, power, xp, death_function = None):
+    def __init__(self, hp, defense, power, xp, death_function = None, buffs = []):
         self.base_max_hp = hp
         self.hp = hp
         self.base_defense = defense
         self.base_power = power
         self.xp = xp
         self.death_function = death_function
+        self.buffs = buffs
+        
     @property
     def power(self):
         bonus = sum(equipment.power_bonus for equipment in get_all_equipped(self.owner))
-        return self.base_power + bonus
+        if 'strength' in self.buffs:
+            return self.base_power + BUFF_AMOUNT + bonus
+        else:
+            return self.base_power + bonus
     
     @property
     def defense(self):
         bonus = sum(equipment.defense_bonus for equipment in get_all_equipped(self.owner))
-        return self.base_defense + bonus    
+        if 'agility' in self.buffs:
+            return self.base_defense + BUFF_AMOUNT + bonus
+        else:
+            return self.base_defense + bonus    
     
     @property
     def max_hp(self):
         bonus = sum(equipment.max_hp_bonus for equipment in get_all_equipped(self.owner))
-        return self.base_max_hp + bonus
+        if 'constitution' in self.buffs:
+            return self.base_max_hp + BUFF_AMOUNT * 10 + bonus
+        else:
+            return self.base_max_hp + bonus
     
     def take_damage(self, damage):
         #damage applied
@@ -216,6 +229,9 @@ class Fighter:
         self.hp += amount
         if self.hp > self.max_hp:
             self.hp = self.max_hp
+            
+            
+                
         
 class BasicMonster:
     #AI!!!
@@ -225,6 +241,19 @@ class BasicMonster:
             
             #move towards player!
             if monster.distance_to(player) >= 2:
+                monster.move_towards(player.x, player.y)
+            
+            elif player.fighter.hp > 0:
+                monster.fighter.attack(player)
+
+class RangedMonster:
+    #Ranged AI Super diffcult #fuck...
+    def take_turn(self):
+        monster = self.owner
+        if libtcod.map_is_in_fov(fov_map, monster.x, monster.y):
+            
+            #get in range
+            if monster.distance_to(player) >= ARCHER_RANGE+1:
                 monster.move_towards(player.x, player.y)
             
             elif player.fighter.hp > 0:
@@ -288,12 +317,13 @@ class Item:
 
 class Equipment:
     #objects that can be equipped
-    def __init__(self, slot, power_bonus = 0, defense_bonus = 0, max_hp_bonus = 0):
+    def __init__(self, slot, power_bonus = 0, defense_bonus = 0, max_hp_bonus = 0, skill = None):
         self.slot = slot
         self.is_equipped = False
         self.power_bonus = power_bonus
         self.defense_bonus = defense_bonus
         self.max_hp_bonus = max_hp_bonus
+        self.skill = skill
         
     def toggle_equip(self):
         if self.is_equipped:
@@ -305,6 +335,8 @@ class Equipment:
         old_equipment = get_equipped_in_slot(self.slot)
         if old_equipment is not None:
             old_equipment.dequip()
+        if self.skill:
+            skills.append(self.skill)
         
         self.is_equipped = True
         message('Equipped ' + self.owner.name + ' on ' + self.slot + '.', libtcod.light_green)
@@ -325,7 +357,11 @@ class Skill:
             message('The skill ' + self.owner.name + ' cannot be used', libtcod.yellow)
         self.use_function()    
             
-        
+class Buff:
+    def __init__(self, name, use_function = None, duration = None):
+        self.name = name
+        self.use_function = use_function
+            
 ################
 #   Functions  #
 ################
@@ -368,7 +404,7 @@ def make_map():
         x = libtcod.random_get_int(0, 0, MAP_WIDTH - w - 1)
         y = libtcod.random_get_int(0, 0, MAP_HEIGHT - h - 1)
         
-        #Rect class makes rectangeles
+        #Rect class makes rectangles
         new_room = Rect(x, y, w, h)
         
         #run through rooms to confirm no intersect
@@ -427,6 +463,7 @@ def place_objects(room):
     monster_chances['troll'] = from_dungeon_level([[15, 3], [40, 5], [70, 7]])
     monster_chances['skeleton'] = from_dungeon_level([[30, 5], [40, 8], [70, 10]])
     monster_chances['Evil'] = from_dungeon_level([[25, 7], [45, 10]])
+    monster_chances['archer'] = from_dungeon_level([[10, 1], [40, 3], [60, 6]])
     
     #Max item numbers and wut not
     max_items = from_dungeon_level([[1, 1], [2, 6]])
@@ -479,6 +516,11 @@ def place_objects(room):
                 fighter_component = Fighter(hp = 200, defense = 6, power = 13, xp = 650, death_function = skeleton_death)
                 ai_component = BasicMonster()
                 monster = Object(x, y, 'W', 'Pure Evil', libtcod.flame, blocks = True, fighter = fighter_component, ai = ai_component)
+            elif choice == 'archer':
+                #archer......................
+                fighter_component = Fighter(hp = 15, defense = 2, power = 3, xp = 20, death_function = archer_death)
+                ai_component = RangedMonster()
+                monster = Object(x, y, 'a', 'Archer', libtcod.green, blocks = True, fighter = fighter_component, ai = ai_component)
                 
             objects.append(monster)
     num_items = libtcod.random_get_int(0, 0, max_items)
@@ -781,17 +823,7 @@ def handle_keys():
     
     #movement keys
     if game_state == 'playing':
-        '''if key.vk == libtcod.KEY_UP:
-            player_move_or_attack(0, -1)
 
-        elif key.vk == libtcod.KEY_DOWN:
-            player_move_or_attack(0, 1)
-        
-        elif key.vk == libtcod.KEY_LEFT:
-            player_move_or_attack(-1, 0)
-        
-        elif key.vk == libtcod.KEY_RIGHT:
-            player_move_or_attack(1, 0)'''
         
         if key.vk == libtcod.KEY_UP or key.vk == libtcod.KEY_KP8:
             player_move_or_attack(0, -1)
@@ -811,6 +843,7 @@ def handle_keys():
             player_move_or_attack(1, 1)
         elif key.vk == libtcod.KEY_KP5:
             pass  #do nothing ie wait for the monster to come to you
+
         
         else:
             key_char = chr(key.c)
@@ -834,7 +867,6 @@ def handle_keys():
                 chosen_skill = skill_menu('Press the key next to a skill to use it!')
                 if chosen_skill is not None:
                     chosen_skill.use()
-            
             if key_char == '<':
                 #go down stairs
                 if stairs.x == player.x and stairs.y == player.y:
@@ -847,8 +879,8 @@ def handle_keys():
                     '\nExperience to level up: ' + str(level_up_xp) + '\n\nMaximum HP: ' + str(player.fighter.max_hp) +
                     '\nAttack: ' + str(player.fighter.power) + '\nDefense: ' + str(player.fighter.defense), CHARACTER_SCREEN_WIDTH)
 
-                    
-            return 'didnt-take-turn'
+            if key_char != 'k':        
+                return 'didnt-take-turn'
         
 
 def is_blocked(x, y):
@@ -928,6 +960,22 @@ def skeleton_death(monster):
         item.always_visible = True
         message(monster.name + ' dropped something!')
 
+def archer_death(monster):
+    message(monster.name.capitalize() + ' is dead! You gain ' + str(monster.fighter.xp) + ' experience points!')
+    monster.char = '%'
+    monster.color = libtcod.dark_red
+    monster.blocks = False
+    monster.fighter = None
+    monster.ai = None
+    monster.name = 'remains of ' + monster.name
+    monster.send_to_back()
+    dice = libtcod.random_get_int(0, 1, 100)
+    if dice > 85:
+        equipment_component = Equipment(slot = 'ranged', power_bonus = 0, skill = Skill('Bow', use_function = fire_ranged))
+        item = Object(monster.x, monster.y, 'D', 'Bow', libtcod.violet, equipment = equipment_component)
+        objects.append(item)
+        item.always_visible = True
+        message(monster.name + ' dropped something!')
         
 def closest_monster(max_range):
     closest_enemy = None
@@ -970,11 +1018,12 @@ def save_game():
     file['stairs_index'] = objects.index(stairs)
     file['dungeon_level'] = dungeon_level
     file['skills'] = skills
+    file['turns'] = turns
     file.close()
 
 def load_game():
     #Load previous game
-    global map, objects, player, inventory, game_msgs, game_state, stairs, dungeon_level, skills
+    global map, objects, player, inventory, game_msgs, game_state, stairs, dungeon_level, skills, turns
     
     file = shelve.open('savegame', 'r')
     map = file['map']
@@ -986,6 +1035,7 @@ def load_game():
     stairs = objects[file['stairs_index']]
     dungeon_level = file['dungeon_level']
     skills = file['skills']
+    turns = file['turns']
     file.close()
     
     initialize_fov()
@@ -1042,9 +1092,14 @@ def check_level_up():
             sword_spin = Skill('Sword Spin', use_function = spin_move)
             skills.append(sword_spin)
         
-        if player.level == 3:
+        if player.level == 4:
             def_buff = Skill('Armour of Courage', use_function = defense_buff)
             skills.append(def_buff)
+            unbuff = Skill('Remove Buff', use_function = rem_buff)
+            skills.append(unbuff)
+        if player.level == 6:
+            con_buff = Skill('Blessing of Wisdom', use_function = hp_buff)
+            skills.append(con_buff)
             
 def from_dungeon_level(table):
     #returns a value dependent on a level!
@@ -1128,19 +1183,34 @@ def spin_move():
     player.fighter.take_damage(PLAYER_SKILL_DAMAGE)
 
 def defense_buff():
-    #Cast Protect Self
-    global is_buff_active
-    
-    if not is_buff_active:
-        message('Your fortitude and courage has influenced your agility!', libtcod.sky)
-        message('Your defense increases by ' + str(BUFF_AMOUNT), libtcod.sky)
-        player.fighter.base_defense += BUFF_AMOUNT
-        is_buff_active = True
+    if 'agility' not in player.fighter.buffs:
+        player.fighter.buffs.append('agility')
     else:
-        message('The defense buff is already active!', libtcod.red)
+        message('You already have this buff active!')
         
-    
-    
+def rem_buff():
+    global player
+    if player.fighter.buffs is not []:
+        del player.fighter.buffs[-1]
+        
+def hp_buff():
+    if 'constitution' not in player.fighter.buffs:
+        player.fighter.buffs.append('constitution')
+    else:
+        message('You already have this buff active!')
+
+def fire_ranged():
+    #find target, destroy.
+    message('Left-click a target for the ranged weapon, or right click to cancel', libtcod.light_cyan)
+    (x, y) = target_tile()
+    if x is None: return 'cancelled'
+    message('You fire your weapon!', libtcod.orange)
+        
+    for obj in objects:
+        if obj.distance(x, y) <= 0 and obj.fighter:
+            message('The ' + obj.name + ' is hit for  ' + str(ARROW_DAMAGE) + ' hit points.', libtcod.orange)
+            obj.fighter.take_damage(ARROW_DAMAGE)
+        
 #############################
 #   Pre-Loop Declaration    #
 #############################
@@ -1155,9 +1225,10 @@ panel = libtcod.console_new(SCREEN_WIDTH, PANEL_HEIGHT)
 libtcod.sys_set_fps(LIMIT_FPS) #SET FPS
 
 def new_game():
-    global player, inventory, game_msgs, game_state, dungeon_level, skills, is_buff_active
+    global player, inventory, game_msgs, game_state, dungeon_level, skills, is_buff_active, turns
     
     dungeon_level = 1
+    turns = 0
     
     fighter_component = Fighter(hp = 100, defense = 1, power = 4, xp = 0, death_function = player_death)    
     player = Object(0, 0, 'W', 'player', libtcod.white, blocks = True, fighter = fighter_component)
@@ -1171,7 +1242,8 @@ def new_game():
     game_msgs = [] 
     inventory = []
     skills = []
-    is_buff_active = False
+    player.fighter.buffs = []
+
     
     message('Welcome stranger! Prepare to face danger and doom!', libtcod.red)
 
@@ -1189,7 +1261,7 @@ def initialize_fov():
             
 
 def play_game():
-    global key, mouse
+    global key, mouse, turns
     
     player_action = None
 
@@ -1199,7 +1271,8 @@ def play_game():
         
     mouse = libtcod.Mouse()
     key = libtcod.Key()
-
+    mes_turns = 0
+    
     while not libtcod.console_is_window_closed():
         libtcod.console_set_default_foreground(con, libtcod.white)
         libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE, key, mouse)
@@ -1214,10 +1287,14 @@ def play_game():
         player_action = handle_keys()
         
         if game_state == 'playing' and player_action != 'didnt-take-turn':
+            turns += 1
             for object in objects:
                 if object.ai:
                     object.ai.take_turn()
-                    
+        
+        if turns % 10 == 0 and mes_turns != turns:
+            message('You have taken ' + str(turns) + ' turns.')
+            mes_turns = turns
         
         if player_action == 'exit':
             save_game()
